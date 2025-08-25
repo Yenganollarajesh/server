@@ -98,9 +98,166 @@ A robust, scalable backend server for the ChatApp application featuring real-tim
    npm start
    ```
 
-## 🗄️ Database Schema
+## 🗄️ Database Setup & Usage
 
-### Tables
+### Option 1: Supabase (Recommended) ☁️
+
+Supabase is a cloud-based PostgreSQL service that provides:
+- Managed PostgreSQL database
+- Real-time subscriptions
+- Built-in authentication
+- Row Level Security (RLS)
+- Automatic backups
+
+#### Supabase Setup
+1. **Create Supabase Project**
+   - Go to [supabase.com](https://supabase.com)
+   - Sign up/Login and create a new project
+   - Wait for project initialization
+
+2. **Get Credentials**
+   - Go to Settings → API
+   - Copy your project URL and API keys
+   - Update `config.env` with these values
+
+3. **Run Database Schema**
+   ```sql
+   -- In Supabase SQL Editor, run:
+   \i supabase-setup.sql
+   ```
+
+4. **Configure RLS Policies**
+   ```sql
+   -- Enable RLS on tables
+   ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+   
+   -- Create policies (examples)
+   CREATE POLICY "Users can view their own profile" ON users
+     FOR SELECT USING (auth.uid() = id);
+   
+   CREATE POLICY "Users can view conversations they're part of" ON conversations
+     FOR SELECT USING (auth.uid() = user1_id OR auth.uid() = user2_id);
+   ```
+
+### Option 2: Local PostgreSQL 🖥️
+
+For development or self-hosted environments, you can use local PostgreSQL.
+
+#### Local PostgreSQL Installation
+
+**Windows:**
+1. Download PostgreSQL from [postgresql.org](https://www.postgresql.org/download/windows/)
+2. Run the installer and follow the setup wizard
+3. Remember the password you set for the `postgres` user
+4. Add PostgreSQL to your PATH environment variable
+
+**macOS:**
+```bash
+# Using Homebrew
+brew install postgresql
+brew services start postgresql
+
+# Or using Postgres.app
+# Download from https://postgresapp.com/
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt update
+sudo apt install postgresql postgresql-contrib
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+```
+
+#### Local Database Setup
+1. **Create Database and User**
+   ```bash
+   # Connect to PostgreSQL as postgres user
+   sudo -u postgres psql
+   
+   # Create database and user
+   CREATE DATABASE chatapp;
+   CREATE USER chatapp_user WITH PASSWORD 'your_password';
+   GRANT ALL PRIVILEGES ON DATABASE chatapp TO chatapp_user;
+   
+   # Exit psql
+   \q
+   ```
+
+2. **Run Schema Scripts**
+   ```bash
+   # Connect to your database
+   psql -h localhost -U chatapp_user -d chatapp
+   
+   # Run the setup script
+   \i setup-db.sql
+   ```
+
+3. **Update Environment Variables**
+   ```env
+   # Local PostgreSQL Configuration
+   DB_HOST=localhost
+   DB_NAME=chatapp
+   DB_USER=chatapp_user
+   DB_PASSWORD=your_password
+   DB_PORT=5432
+   ```
+
+#### PostgreSQL Management Commands
+
+**Connect to Database:**
+```bash
+# Connect as specific user
+psql -h localhost -U username -d database_name
+
+# Connect as postgres user (Linux/macOS)
+sudo -u postgres psql
+
+# Connect to default database
+psql
+```
+
+**Basic PostgreSQL Commands:**
+```sql
+-- List all databases
+\l
+
+-- Connect to a database
+\c database_name
+
+-- List all tables
+\dt
+
+-- Describe table structure
+\d table_name
+
+-- List all users
+\du
+
+-- Exit psql
+\q
+```
+
+**Database Operations:**
+```sql
+-- Create a new database
+CREATE DATABASE database_name;
+
+-- Drop a database
+DROP DATABASE database_name;
+
+-- Backup database
+pg_dump -h localhost -U username database_name > backup.sql
+
+-- Restore database
+psql -h localhost -U username database_name < backup.sql
+```
+
+### Database Schema
+
+#### Tables
 
 #### Users Table
 ```sql
@@ -139,6 +296,94 @@ CREATE TABLE messages (
   is_read BOOLEAN DEFAULT FALSE,
   read_at TIMESTAMP
 );
+```
+
+#### Indexes for Performance
+```sql
+-- Create indexes for better query performance
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_conversations_users ON conversations(user1_id, user2_id);
+CREATE INDEX idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX idx_messages_sender ON messages(sender_id);
+CREATE INDEX idx_messages_created ON messages(created_at);
+```
+
+#### Database Functions
+```sql
+-- Function to update conversation last message
+CREATE OR REPLACE FUNCTION update_conversation_last_message()
+RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE conversations 
+  SET last_message = NEW.content,
+      last_message_time = NEW.created_at,
+      last_message_sender_id = NEW.sender_id
+  WHERE id = NEW.conversation_id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to automatically update conversation
+CREATE TRIGGER trigger_update_conversation_last_message
+  AFTER INSERT ON messages
+  FOR EACH ROW
+  EXECUTE FUNCTION update_conversation_last_message();
+```
+
+### Database Connection Testing
+
+#### Test Local PostgreSQL Connection
+```bash
+# Test connection
+psql -h localhost -U username -d database_name -c "SELECT version();"
+
+# Test from Node.js
+node check-db.js
+```
+
+#### Test Supabase Connection
+```bash
+# Test using the provided script
+node test-connection.js
+```
+
+### Database Monitoring & Maintenance
+
+#### Performance Monitoring
+```sql
+-- Check table sizes
+SELECT 
+  schemaname,
+  tablename,
+  attname,
+  n_distinct,
+  correlation
+FROM pg_stats 
+WHERE tablename IN ('users', 'conversations', 'messages');
+
+-- Check index usage
+SELECT 
+  schemaname,
+  tablename,
+  indexname,
+  idx_scan,
+  idx_tup_read,
+  idx_tup_fetch
+FROM pg_stat_user_indexes;
+```
+
+#### Regular Maintenance
+```sql
+-- Analyze tables for better query planning
+ANALYZE users;
+ANALYZE conversations;
+ANALYZE messages;
+
+-- Vacuum tables to reclaim storage
+VACUUM ANALYZE users;
+VACUUM ANALYZE conversations;
+VACUUM ANALYZE messages;
 ```
 
 ## 🔌 API Endpoints
@@ -276,6 +521,12 @@ CMD ["npm", "start"]
    - Check table permissions
    - Verify RLS policies
 
+4. **PostgreSQL Connection Issues**
+   - Verify PostgreSQL service is running
+   - Check connection credentials
+   - Ensure database exists
+   - Check firewall settings
+
 ### Debug Mode
 ```bash
 # Enable debug logging
@@ -283,6 +534,9 @@ DEBUG=socket.io:* npm run dev
 
 # Check server status
 curl http://localhost:3000/health
+
+# Test database connection
+node check-db.js
 ```
 
 ## 📁 Project Structure
@@ -292,6 +546,8 @@ server/
 ├── server.js              # Main server file
 ├── supabase.js            # Supabase client and helpers
 ├── supabase-setup.sql     # Database schema setup
+├── setup-db.sql           # Local PostgreSQL setup
+├── check-db.js            # Database connection test
 ├── SUPABASE_SETUP.md      # Setup documentation
 ├── config.env             # Environment variables
 ├── package.json           # Dependencies
@@ -316,6 +572,7 @@ This project is licensed under the MIT License.
 - **Frontend Mobile**: https://github.com/Yenganollarajesh/mobile.git
 - **Supabase**: https://supabase.com/
 - **Socket.IO**: https://socket.io/
+- **PostgreSQL**: https://www.postgresql.org/
 
 ## 📞 Support
 
@@ -323,6 +580,7 @@ For support and questions:
 - Create an issue in the GitHub repository
 - Check the troubleshooting section above
 - Review the Supabase documentation
+- Check PostgreSQL documentation for database issues
 
 ---
 
